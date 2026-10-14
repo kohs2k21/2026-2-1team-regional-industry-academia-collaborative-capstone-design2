@@ -113,6 +113,83 @@
 .point-right { transform: rotate(-90deg); }
 @media (prefers-reduced-motion: reduce) { .spinning, .toast { animation: none; } }
 
+/* Virtual portfolio: opening holdings are distinct from recorded trades. */
+.virtual-toolbar { flex-shrink: 0; display: flex; align-items: center; gap: 7px; padding: 8px 10px; font-size: 11px; background: #19151b; border-top: 1px solid #372733; }
+.virtual-toolbar > span { color: #a78c9e; margin-right: auto; font-size: 9px; }
+.kiwoom .virtual-toolbar button { border: 1px solid #73405e; border-radius: 6px; padding: 7px 8px; color: #f0b3d4; font-size: 10px; }
+.virtual-empty { padding: 28px 14px 70px; text-align: center; color: #b7a4b1; display: grid; justify-items: center; gap: 10px; }
+.virtual-empty strong { font-size: 13px; color: #e4d2de; }
+.virtual-empty p { margin: 0; line-height: 1.8; font-size: 11px; color: #8f838c; }
+.kiwoom .virtual-empty button { background: #a83072; color: #fff; border-radius: 8px; padding: 12px 20px; font-size: 12px; margin-top: 5px; }
+.kiwoom .holding-row { width: 100%; display: grid; grid-template-columns: 30% 22.5% 22.5% 25%; padding: 14px 4px; border-bottom: 1px solid #303036; text-align: center; }
+.holding-row > span { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-width: 0; }
+.holding-row > span:first-child { text-align: left; padding-left: 7px; }
+.holding-row strong { font-size: 12px; font-weight: 500; }
+.holding-row small { font-size: 10px; color: #8e8890; }
+.holding-row .profit-positive, .holding-row .profit-positive small { color: #ed7f9f; }
+.holding-row .profit-negative, .holding-row .profit-negative small { color: #74aaf2; }
+.kiwoom .trade-reminder { display: flex; align-items: center; gap: 10px; width: calc(100% - 20px); margin: 10px; padding: 11px; text-align: left; border: 1px solid #58334b; background: #2b1d29; border-radius: 10px; font-size: 11px; color: #f1badb; }
+.trade-reminder span { flex: 1; }
+.trade-reminder small { display: block; margin-top: 6px; color: #b79aac; font-size: 10px; }
+.virtual-warning { margin: 10px; font-size: 10px; color: #e8b38f; line-height: 1.6; }
+.bottom-sheet:has(.virtual-sheet) { height: 85%; display: flex; flex-direction: column; }
+.bottom-sheet:has(.virtual-sheet) .sheet-header, .bottom-sheet:has(.virtual-sheet) .sheet-handle-zone { flex-shrink: 0; }
+.sheet-content:has(.virtual-sheet) { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; padding-bottom: 16px; }
+.virtual-sheet { display: flex; flex-direction: column; flex: 1; min-height: 0; font-family: 'Noto Sans KR', sans-serif; }
+.virtual-sheet button { appearance: none; font: inherit; cursor: pointer; border: 0; color: inherit; background: transparent; }
+.virtual-sheet button:focus-visible { outline: 2px solid #f4a4cf; outline-offset: -2px; }
+.virtual-sheet .virtual-close { position: absolute; right: 12px; top: 18px; padding: 8px; color: #bbb; }
+.virtual-sheet-scroll { position: relative !important; flex: 1; min-height: 0; inset: auto !important; }
+/* The sheet already moves above the keyboard; its child must use the remaining height. */
+.virtual-sheet-scroll > .mobile-scroll { bottom: 0; }
+.virtual-sheet-scroll > .mobile-scrollbar { bottom: 12px; }
+.virtual-intro { margin: 10px 0 16px; font-size: 11px; line-height: 1.8; color: #a8a1ae; }
+.virtual-stock-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding-bottom: 10px; }
+.virtual-stock-grid button { display: grid; gap: 9px; padding: 16px 12px; border: 1px solid #45404a; border-radius: 12px; background: #29252e; text-align: left; }
+.virtual-stock-grid small { font-size: 9px; color: #bca0b3; }
+.virtual-stock-grid strong { font-size: 13px; color: #f0e8ed; }
+.virtual-stock-grid span { font-size: 11px; color: #c0b8c2; }
+.virtual-stock-heading { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; gap: 8px; }
+.virtual-stock-heading small { color: #ab99a5; font-size: 10px; }
+.virtual-stock-heading h3 { margin: 9px 0 0; font-size: 21px; color: #f4eaf0; }
+.virtual-stock-heading button { padding: 8px; font-size: 10px; color: #d499ba; }
+.virtual-mode { display: flex; gap: 8px; margin-bottom: 16px; }
+.virtual-mode button { flex: 1; border: 1px solid #4e414c; border-radius: 9px; padding: 12px; color: #a295a0; font-size: 13px; }
+.virtual-mode button.selected { border-color: #d04b92; background: #492d3f; color: #ffcce8; }
+.virtual-price, .virtual-total { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 0; font-size: 12px; color: #b1a4b0; }
+.virtual-price strong, .virtual-total strong { font-size: 18px; color: #f0e5ec; }
+.virtual-held { font-size: 11px; color: #a69ba8; margin: 0 0 18px; }
+.virtual-held b { color: #e8c8dd; }
+.virtual-input { display: flex; flex-direction: column; gap: 9px; margin: 16px 0; color: #cbb6c6; font-size: 12px; }
+.virtual-input > span:last-child { display: flex; align-items: center; gap: 9px; background: #151219; border: 1px solid #62515e; border-radius: 9px; padding: 10px 13px; }
+.virtual-input input { width: 100%; min-width: 0; padding: 5px 0; outline: 0; border: 0; background: transparent; color: #fff1fa; font: 500 20px 'Noto Sans KR', sans-serif; }
+.virtual-input > span:last-child:focus-within { border-color: #ed98c7; }
+.virtual-input b { font-size: 12px; color: #958291; }
+.virtual-quantity-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.virtual-quantity-options button { border: 1px solid #53414e; border-radius: 7px; color: #d4b8ca; font-size: 11px; padding: 9px 12px; }
+.virtual-total { margin-top: 16px; border-top: 1px solid #493947; }
+.virtual-sheet .virtual-submit { flex-shrink: 0; width: 100%; border-radius: 10px; padding: 15px 12px; margin-top: 12px; background: #b33279; color: #fff; font-size: 13px; font-weight: 700; }
+.virtual-error { padding: 12px; background: #4a2834; color: #ffc3ce; border-radius: 8px; font-size: 11px; line-height: 1.6; }
+.virtual-sheet .trade-record { display: block; width: 100%; margin-bottom: 12px; border: 1px solid #55434f; border-radius: 14px; background: #2b232d; text-align: left; padding: 16px; }
+.trade-record-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 13px; font-size: 10px; }
+.trade-record-top b { color: #f3a3c8; font-weight: 500; }
+.trade-sell .trade-record-top b { color: #a0c3ff; }
+.trade-record-top small { font-size: 9px; color: #b8a7b7; }
+.trade-record > strong { display: flex; justify-content: space-between; color: #f2e8ef; font-size: 16px; }
+.trade-record > span:not(.trade-record-top) { display: block; margin-top: 12px; color: #d0bfcc; font-size: 12px; line-height: 1.7; }
+.trade-record > span > span { display: block; font-size: 10px; color: #9d8f9c; }
+.trade-record > small { display: block; margin-top: 9px; color: #baa6b7; font-size: 10px; }
+.reflection-trade { margin: 15px 0 20px; padding: 16px; border: 1px solid #805173; border-radius: 13px; background: #302032; }
+.reflection-trade > span { display: block; font-size: 10px; color: #e0a7c9; margin-bottom: 9px; }
+.reflection-trade > strong { display: block; font-size: 16px; font-weight: 500; color: #ffe7f6; }
+.reflection-trade p { font-size: 11px; color: #bba0b8; line-height: 1.7; margin: 10px 0 7px; }
+.reflection-trade > small { font-size: 10px; color: #ccb1c8; }
+.reflection-trade.trade-sell { border-color: #506f9a; background: #1e2b3e; }
+.reflection-trade.trade-sell > span { color: #a4c8f5; }
+.principle-trade-line { display: block; margin: -3px 0 12px; font-size: 11px; color: #ae9eab; }
+.previous-context summary { font-size: 10px; color: #c9b5cc; cursor: pointer; }
+.previous-context[open] > strong { margin-top: 12px; }
+
 /* Final alignment against the supplied account screen. */
 .top-tabs { position: absolute; left: 13.2cqw; right: 14.4cqw; height: auto; gap: 0; }
 .main-header .more { margin-left: auto; }
@@ -408,6 +485,7 @@
 .principles-footer .flow-primary { width: 100%; min-height: 54px; font-size: 13px; }
 .principles-empty { display: grid; justify-items: center; gap: 12px; text-align: center; padding: 52px 20px; border: 1px dashed #363e4a; border-radius: 20px; background: #1a1f26; color: #9ba4b2; }
 .principles-empty p { color: #a9b0bc; font-size: 13px; margin: 0; }
+.principles-empty small { color: #84909f; font-size: 11px; line-height: 1.8; }
 .principles-storage { margin: 28px 0 0; text-align: center; color: #a0a8b5; font-size: 10px; line-height: 1.8; }
 .principle-detail { padding-top: 17px; }
 .principle-detail h1 { color: #f1f3f6; font-size: 24px; font-weight: 500; line-height: 1.8; letter-spacing: -.04em; margin: 19px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
