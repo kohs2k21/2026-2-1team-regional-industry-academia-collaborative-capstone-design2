@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applySimulationAction, emptySimulation, parseSimulation, portfolioSummary, saveLinkedPrinciple, simulationStocks, tradeLabel } from '../src/simulation.ts';
+import { demoAccounts, demoPortfolio, applySimulationAction, emptySimulation, parseSimulation, portfolioSummary, saveLinkedPrinciple, simulationStocks, tradeLabel } from '../src/simulation.ts';
 
 const date = '2026-10-14T06:00:00.000Z';
 const action = (mode, quantity, price = 50000, accountId = 'account-a') => ({ mode, quantity, price, accountId, stockId: 'hanbit' });
@@ -101,4 +101,64 @@ test('duplicate trade ids are rejected before any holding is committed', () => {
   assert.throws(() => apply(state, 'buy', 1, 50000));
   assert.equal(state.holdings[0].quantity, 11);
   assert.equal(state.trades.length, 1);
+});
+
+test('execution context captures account weights once and later orders preserve it', () => {
+  const start = applySimulationAction(seeded(), { ...action('seed', 10, 32000), stockId: 'saebom' }, 'seed-b', date);
+  const bought = apply(start, 'buy', 5, 50000);
+  const snapshot = structuredClone(bought.trades[0].market);
+  assert.equal(snapshot.source, 'fictional');
+  assert.equal(snapshot.weightBefore, 61);
+  assert.equal(snapshot.weightAfter, 70.1);
+  assert.equal(snapshot.prices[6], 50000);
+  const later = applySimulationAction(bought, { ...action('buy', 10, 32000), stockId: 'saebom' }, 'trade-later', date);
+  assert.deepEqual(later.trades.find(item => item.id === 'trade-1').market, snapshot);
+  assert.deepEqual(parseSimulation(JSON.stringify(later)), later);
+  const otherAccount = apply(start, 'buy', 2, 50000, 'trade-other', 'account-b');
+  assert.equal(otherAccount.trades[0].market.weightBefore, 0);
+  assert.equal(otherAccount.trades[0].market.weightAfter, 100);
+});
+
+test('legacy trades without market context stay readable and corrupted context is rejected', () => {
+  const state = apply(seeded(), 'buy', 1, 50000);
+  const legacy = structuredClone(state);
+  delete legacy.trades[0].market;
+  assert.deepEqual(parseSimulation(JSON.stringify(legacy)), legacy);
+  for (const change of [
+    data => { data.trades[0].market.weightAfter = 101; },
+    data => { data.trades[0].market.source = 'live'; },
+    data => { data.trades[0].market.prices[6] = 1; },
+    data => { data.trades[0].market.volumeRatio = 0; },
+  ]) {
+    const data = structuredClone(state); change(data);
+    assert.throws(() => parseSimulation(JSON.stringify(data)));
+  }
+});
+
+test('minimum and maximum permitted execution prices produce persistable chart context', () => {
+  for (const price of [1, 100000000]) {
+    const state = apply(emptySimulation(), 'buy', 1, price);
+    assert.equal(state.trades[0].market.prices[6], price);
+    assert.deepEqual(parseSimulation(JSON.stringify(state)), state);
+  }
+});
+
+test('injected balances match the complete fixed trade history without user setup', () => {
+  assert.deepEqual(parseSimulation(JSON.stringify(demoPortfolio)), demoPortfolio);
+  for (const accountId of demoAccounts) {
+    const trades = demoPortfolio.trades.filter(trade => trade.accountId === accountId);
+    assert.equal(trades.length, 24);
+    assert.equal(demoPortfolio.holdings.filter(item => item.accountId === accountId && item.quantity > 0).length, 4);
+    assert.deepEqual(trades.map(trade => trade.createdAt), trades.map(trade => trade.createdAt).sort().reverse());
+    for (const holding of demoPortfolio.holdings.filter(item => item.accountId === accountId)) {
+      let quantity = 0;
+      for (const trade of trades.filter(item => item.stockId === holding.stockId).reverse()) {
+        assert.equal(trade.beforeQuantity, quantity);
+        quantity += trade.side === 'buy' ? trade.quantity : -trade.quantity;
+        assert.equal(trade.afterQuantity, quantity);
+      }
+      assert.equal(holding.quantity, quantity);
+    }
+    assert.ok(portfolioSummary(demoPortfolio, accountId).value > 0);
+  }
 });
