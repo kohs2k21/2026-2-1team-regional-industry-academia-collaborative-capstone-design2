@@ -1,19 +1,26 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ArrowLeftIcon, ArrowRightIcon, UsersIcon, CoinsIcon, CaretRightIcon, BookmarkSimpleIcon, SparkleIcon, ArrowsClockwiseIcon, CaretDownIcon, CaretUpIcon, CheckIcon, DotsThreeVerticalIcon, GearSixIcon, ListIcon, MicrophoneIcon, TriangleIcon, XIcon, HourglassIcon, CompassIcon, EyeIcon, TargetIcon, ShieldCheckIcon, QuestionIcon, ChartLineIcon, BellIcon, ReceiptIcon } from '@phosphor-icons/react';
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { ArrowLeftIcon, ArrowRightIcon, UsersIcon, CoinsIcon, CaretRightIcon, BookmarkSimpleIcon, SparkleIcon, ArrowsClockwiseIcon, CaretDownIcon, CaretUpIcon, CheckIcon, DotsThreeVerticalIcon, GearSixIcon, ListIcon, TriangleIcon, XIcon, HourglassIcon, CompassIcon, EyeIcon, TargetIcon, ShieldCheckIcon, QuestionIcon, ChartLineIcon, BellIcon, ReceiptIcon } from '@phosphor-icons/react';
+import { createPortal } from 'react-dom';
+import { motion, useReducedMotion } from 'motion/react';
 import '@fontsource/noto-sans-kr/400.css';
 import '@fontsource/noto-sans-kr/500.css';
 import '@fontsource/noto-sans-kr/700.css';
 import '@fontsource/noto-serif-kr/700.css';
-import { BottomSheet, KeyboardTextarea, MobileScroll, useKeyboardInsets, useKeyboard, useMobileDevice } from './mobile';
+import { BottomSheet, Carousel, KeyboardTextarea, MobileScroll, useKeyboardInsets, useKeyboard, useMobileDevice } from './mobile';
 import { demoAccounts, demoPortfolio, parseSimulation, portfolioSummary, saveLinkedPrinciple, stockFor, tradeLabel, won, type TradeRecord } from './simulation';
+import { navigateScreens, screenTab, type Screen, type WorkspaceTab } from './navigation';
 
+type AccountPosition = { id: string; name: string; symbol: string; quantity: number; profit: number; percent: number; cost: number; value: number; foreign: boolean };
+const overseasPosition: AccountPosition = { id: 'voo', name: 'S&P 500 뱅가드 ETF', symbol: 'VOO', quantity: 17, profit: 2457.54, percent: 25.8, cost: 9523.11, value: 11995.71, foreign: true };
 const accountOptions = demoAccounts;
-const topTabs = ['국내잔고', '미체결', '예수금', '주문가능금액'];
-const bottomTabs = ['관심종목', '현재가', '주문', '차트', '계좌', '종합'];
-type Sheet = 'account' | 'notice' | 'tools' | 'menu' | 'settings' | 'ranking' | 'overseas' | 'sell' | 'chat' | null;
+const topTabs = ['내계좌', '해외잔고', '미체결', '체결내역', '실현손익'];
+const bottomTabs = ['관심종목', '현재가', '주문', '차트', '계좌', '투자'];
+type Sheet = 'account' | 'notice' | 'tools' | 'menu' | 'settings' | 'ranking' | 'overseas' | 'sell' | 'chat' | 'exchange' | 'fees' | 'deposit' | 'collection' | 'holding' | null;
 
 export default function Prototype() {
   const [landingOpen, setLandingOpen] = useState(false);
+  const [landingEntry, setLandingEntry] = useState(0);
+  useEffect(() => { document.title = '키움증권'; }, []);
   const keyboard = useKeyboard();
   const { device } = useMobileDevice();
   const aiButtonRef = useRef<HTMLButtonElement>(null);
@@ -23,8 +30,12 @@ export default function Prototype() {
     if (landingOpen) backButtonRef.current?.focus({ preventScroll: true });
     else if (hasNavigated.current) aiButtonRef.current?.focus({ preventScroll: true });
   }, [landingOpen]);
-  const [topTab, setTopTab] = useState('국내잔고');
-  const [balanceTab, setBalanceTab] = useState('키움 잔고');
+  const [topTab, setTopTab] = useState('해외잔고');
+  const [market, setMarket] = useState<'overseas' | 'domestic'>('overseas');
+  const [balanceTab, setBalanceTab] = useState('일반 잔고');
+  const [exchange, setExchange] = useState('전체 거래소');
+  const [wonCurrency, setWonCurrency] = useState(false);
+  const [selectedHolding, setSelectedHolding] = useState<AccountPosition | null>(null);
   const [account, setAccount] = useState(accountOptions[0]);
   const simulation = demoPortfolio;
   const [principles, setPrinciples] = useState(readPrinciples);
@@ -34,8 +45,30 @@ export default function Prototype() {
   const [landingRecords, setLandingRecords] = useState(false);
   const holdings = simulation.holdings.filter(item => item.accountId === account && item.quantity > 0);
   const accountTrades = simulation.trades.filter(item => item.accountId === account);
-  const summary = portfolioSummary(simulation, account);
+  const domesticSummary = portfolioSummary(simulation, account);
+  const isOverseas = market === 'overseas';
+  const hasOverseas = account === accountOptions[0];
+  const summary = isOverseas ? hasOverseas && balanceTab === '일반 잔고' && ['전체 거래소', '미국'].includes(exchange) ? { cost: 12774299, value: 16091045, realized: 0, profit: 3296544, percent: 25.8 } : { cost: 0, value: 0, realized: 0, profit: 0, percent: 0 } : domesticSummary;
+  const positions: AccountPosition[] = balanceTab !== '일반 잔고' ? [] : isOverseas ? hasOverseas && ['전체 거래소', '미국'].includes(exchange) ? [overseasPosition] : [] : holdings.map(item => {
+    const stock = stockFor(item.stockId);
+    return { id: item.stockId, name: stock.name, symbol: item.stockId.toUpperCase(), quantity: item.quantity, profit: (stock.price - item.averagePrice) * item.quantity,
+      percent: (stock.price / item.averagePrice - 1) * 100, cost: item.averagePrice * item.quantity, value: stock.price * item.quantity, foreign: false };
+  });
+  const displayAmount = (amount: number, foreign = isOverseas) => foreign && !wonCurrency ? amount.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) : won(foreign ? amount * 1341.4 : amount);
   const pendingTrade = accountTrades.find(trade => !journal.some(item => item.tradeId === trade.id));
+  const notificationTrade = pendingTrade || accountTrades[0];
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (notificationTimer.current) clearTimeout(notificationTimer.current); }, []);
+  function showNotification() {
+    keyboard.hide(); setNotificationOpen(true);
+    if (notificationTimer.current) clearTimeout(notificationTimer.current);
+    notificationTimer.current = setTimeout(() => setNotificationOpen(false), 7000);
+  }
+  function dismissNotification() {
+    setNotificationOpen(false);
+    if (notificationTimer.current) clearTimeout(notificationTimer.current);
+  }
   function updatePrinciples(next: InvestmentPrinciple[]) {
     setPrinciples(next);
     try { localStorage.setItem(principlesStorageKey, JSON.stringify(next)); localStorage.setItem(journalStorageKey, JSON.stringify(journal)); }
@@ -46,7 +79,6 @@ export default function Prototype() {
     try { localStorage.setItem(journalStorageKey, JSON.stringify(next)); } catch { setStorageAvailable(false); }
   }
   const [expanded, setExpanded] = useState(true);
-  const [credit, setCredit] = useState('융자별');
   const [rows, setRows] = useState(2);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -67,90 +99,99 @@ export default function Prototype() {
     setRefreshing(true);
     refreshTimer.current = setTimeout(() => { setRefreshing(false); notify('잔고를 새로고침했습니다.'); }, 650);
   }
-  function selectTop(value: string) { setTopTab(value); setSheet(null); }
-  const titles: Record<Exclude<Sheet, null>, string> = { account: '계좌 선택', notice: '잔고 조회 유의사항', tools: '투자도구', menu: '전체 메뉴', settings: '잔고 화면 설정', ranking: 'MY랭킹', overseas: '해외 잔고', sell: '일괄매도', chat: '지수 채팅' };
-  const indices = [{ name: '나스닥', value: '27,068.72' }, { name: '코스피', value: '2,650.00' }, { name: '코스닥', value: '780.00' }];
+  function selectTop(value: string) {
+    if (value === '내계좌') { setSheet('account'); return; }
+    if (value === '체결내역') { openLanding(null, true); return; }
+    if (value === '해외잔고' || value === '국내잔고') { setMarket(value === '해외잔고' ? 'overseas' : 'domestic'); setBalanceTab('일반 잔고'); setExchange('전체 거래소'); }
+    setTopTab(value); setSheet(null);
+  }
+  const titles: Record<Exclude<Sheet, null>, string> = { account: '계좌 선택', notice: '잔고 조회 유의사항', tools: '투자도구', menu: '전체 메뉴', settings: '잔고 화면 설정', ranking: 'MY랭킹', overseas: '해외 잔고', sell: '일괄매도', chat: '실시간 지수', exchange: '거래소 선택', fees: '수수료', deposit: '예수금', collection: '모으기 잔고', holding: selectedHolding?.name || '종목 정보' };
+  const indices = [{ name: 'S&P500', value: '7,718.94' }, { name: '나스닥', value: '27,068.72' }, { name: '코스피', value: '2,650.00' }, { name: '코스닥', value: '780.00' }];
   function openLanding(selectedTrade: TradeRecord | null = null, showRecords = false) {
     keyboard.hide();
     setSheet(null);
-    setLandingTrade(selectedTrade); setLandingRecords(showRecords);
+    dismissNotification(); setLandingTrade(selectedTrade); setLandingRecords(showRecords);
     setToast('');
     hasNavigated.current = true;
+    setLandingEntry(entry => entry + 1);
     setLandingOpen(true);
   }
-  if (landingOpen) return <ConfessionLanding backButtonRef={backButtonRef} onBack={() => { keyboard.hide(); setLandingOpen(false); }}
+  const notificationLayer = <DemoPushNotification trade={notificationTrade} open={notificationOpen} onShow={showNotification} onDismiss={dismissNotification} onOpen={() => openLanding(notificationTrade)} />;
+  if (landingOpen) return <><ConfessionLanding key={landingEntry} backButtonRef={backButtonRef} onBack={() => { keyboard.hide(); setLandingOpen(false); }}
     trades={accountTrades} initialTrade={landingTrade} initialRecords={landingRecords} principles={principles}
-    storageAvailable={storageAvailable} onChange={updatePrinciples} journal={journal} onJournalChange={updateJournal} />;
+    storageAvailable={storageAvailable} onChange={updatePrinciples} journal={journal} onJournalChange={updateJournal} />{notificationLayer}</>;
   return (
     <>
-    <main className="kiwoom" aria-label="키움증권 국내잔고 목업">
+    <main className="kiwoom account-page" aria-label={`키움증권 ${isOverseas ? '해외' : '국내'}잔고`}>
       <header className="main-header">
-        <button className="back icon-button" aria-label="이전 화면" onClick={() => { selectTop('국내잔고'); setBalanceTab('키움 잔고'); }}><ArrowLeftIcon size={29} weight="thin" /></button>
-        <nav className="top-tabs" aria-label="계좌 메뉴">
-          {topTabs.map((label) => <button key={label} className={topTab === label ? 'active' : ''} aria-current={topTab === label ? 'page' : undefined} onClick={() => selectTop(label)}>{label === '국내잔고' && <MicrophoneIcon className="voice-icon" size={12} weight="light" />}{label}</button>)}
-        </nav>
+        <button className="back icon-button" aria-label="이전 화면" onClick={() => selectTop(isOverseas ? '해외잔고' : '국내잔고')}><ArrowLeftIcon size={29} weight="thin" /></button>
+        <nav className="top-tabs" aria-label="계좌 메뉴"><MobileScroll className="account-top-scroll"><Carousel ariaLabel="계좌 화면 메뉴" className="account-top-carousel" contentClassName="account-top-track">
+          {topTabs.map(item => { const label = item === '해외잔고' && !isOverseas ? '국내잔고' : item; return <button key={item} className={topTab === label ? 'active' : ''} aria-current={topTab === label ? 'page' : undefined} onClick={() => selectTop(label)}>{label}</button>; })}
+        </Carousel></MobileScroll></nav>
         <button className="more icon-button" aria-label="더보기" onClick={() => setSheet('menu')}><DotsThreeVerticalIcon size={29} weight="bold" /></button>
       </header>
       <div className="balance-tabs" role="tablist" aria-label="잔고 구분">
-        {['키움 잔고', '타사 잔고'].map(label => <button key={label} role="tab" aria-selected={balanceTab === label} className={balanceTab === label ? 'selected' : ''} onClick={() => setBalanceTab(label)}>{label}</button>)}
+        {['일반 잔고', '소수점 잔고', '타사 잔고'].map(label => <button key={label} role="tab" aria-selected={balanceTab === label} className={balanceTab === label ? 'selected' : ''} onClick={() => setBalanceTab(label)}>{label}</button>)}
       </div>
       <button className="edge-handle" aria-label="빠른 메뉴" onClick={() => setSheet('menu')} />
       <div className="account-toolbar">
-        <button className="outline notice" onClick={() => setSheet('notice')}>유의</button>
         <button className="outline account-selector" aria-label={`계좌 선택: ${account}`} onClick={() => setSheet('account')}><span>{account}</span><CaretDownIcon size={13} weight="light" /></button>
         <button className="outline refresh" aria-label="잔고 새로고침" aria-busy={refreshing} onClick={refresh}><ArrowsClockwiseIcon className={refreshing ? 'spinning' : ''} size={26} weight="thin" /></button>
-        <button className="outline overseas" onClick={() => setSheet('overseas')}>해외<br />잔고</button>
+        <button className="outline collection" onClick={() => setSheet('collection')}>모으기<br />잔고</button>
+        <button className="outline market-switch" onClick={() => selectTop(isOverseas ? '국내잔고' : '해외잔고')}>{isOverseas ? '국내' : '해외'}<br />잔고</button>
       </div>
-      {topTab === '국내잔고' && balanceTab === '키움 잔고' ? <>
+      <div className="account-query-toolbar">
+        <button className="outline notice" onClick={() => setSheet('notice')}>유의</button>
+        <button className="outline exchange-selector" onClick={() => setSheet('exchange')}>{exchange}<CaretDownIcon size={11} weight="fill" /></button>
+        <button className="outline currency-toggle" aria-label="잔고 표시 통화 변경" aria-pressed={wonCurrency} onClick={() => setWonCurrency(!wonCurrency)}>{wonCurrency || !isOverseas ? '원화' : '외화'}<span className="row-dots"><span className={!wonCurrency ? 'on' : ''} /><span className={wonCurrency ? 'on' : ''} /></span></button>
+        <button className="outline" onClick={() => setSheet('fees')}>수수료</button>
+        <button className="outline" onClick={() => setSheet('deposit')}>예수금</button>
+        <button className="outline" onClick={() => setSheet('tools')}>투자<br />도구</button>
+      </div>
+      {['해외잔고', '국내잔고'].includes(topTab) ? <>
         <section className="balance-card" aria-label="계좌 잔고 요약">
-          <button className="profit-row" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}><strong>평가손익</strong><b>{won(summary.profit)}원</b><span>{summary.percent.toFixed(2)}%</span>{expanded ? <CaretUpIcon size={14} weight="light" /> : <CaretDownIcon size={14} weight="light" />}</button>
-          {expanded && <div className="balance-details"><div><span>총 매입</span><span>{won(summary.cost)}</span><span>실현손익</span><span>{won(summary.realized)}</span></div><div><span>총 평가</span><span>{won(summary.value)}</span><button className="estimated" onClick={() => notify(`보유종목 평가금액 ${won(summary.value)}원 · 수수료 제외`)}><span>추정자산</span><ArrowsClockwiseIcon size={15} weight="light" /></button><span /></div></div>}
+          <button className="profit-row" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}><strong>총 평가손익(원)</strong><b className={summary.profit >= 0 ? 'account-positive' : 'account-negative'}>{summary.profit > 0 ? '+' : ''}{won(summary.profit)}</b><span className={summary.profit >= 0 ? 'account-positive' : 'account-negative'}>{summary.percent > 0 ? '+' : ''}{summary.percent.toFixed(2)}%</span>{expanded ? <CaretUpIcon size={14} weight="light" /> : <CaretDownIcon size={14} weight="light" />}</button>
+          {expanded && <div className="balance-details"><div><span>매입금액</span><span>{won(summary.cost)}</span><span>실현손익</span><span>{won(summary.realized)}</span><button className="estimated" onClick={refresh}><span>{isOverseas ? '원화' : ''}예수금</span><ArrowsClockwiseIcon size={15} weight="light" /></button><span /></div><div><span>평가금액</span><span>{won(summary.value)}</span><span /><span /><span className="estimated-assets">{isOverseas ? '원화' : ''}추정자산</span><span /></div></div>}
           <button className="ranking" onClick={() => setSheet('ranking')}><span>MY랭킹</span><strong>월 수익률 순위 조회 (키움전체)</strong><ArrowsClockwiseIcon size={16} weight="light" /></button>
         </section>
-        <div className="investment-toolbar">
-          <button className="outline tools" onClick={() => setSheet('tools')}><img src="/assets/kiwoom/investment-tools.png" alt="" draggable={false} /><strong>투자도구</strong></button>
-          <button className="outline sell" onClick={() => setSheet('sell')}>일괄매도</button>
-          <div className="credit-toggle" aria-label="융자 표시 방식">{['융자별', '융자합'].map(label => <button key={label} className={credit === label ? 'selected' : ''} aria-pressed={credit === label} onClick={() => setCredit(label)}>{label}</button>)}</div>
-          <button className="outline row-toggle" onClick={() => setRows(rows === 2 ? 1 : 2)} aria-label={`${rows}줄 보기, 전환`}>{rows}줄 <span className="row-dots"><span className={rows === 2 ? 'on' : ''} /><span className={rows === 1 ? 'on' : ''} /></span></button>
-        </div>
-        <div className="account-records-toolbar"><span>시연용 잔고 · 임시 데이터</span><button onClick={() => openLanding(null, true)}>거래 내역 {accountTrades.length}<CaretRightIcon size={13} /></button></div>
         <div className={`holdings-header ${rows === 1 ? 'single-row' : ''}`} role="table" aria-label="보유종목">
           <button className="table-settings icon-button" aria-label="잔고 화면 설정" onClick={() => setSheet('settings')}><GearSixIcon size={16} weight="fill" /></button>
-          <div role="row" className="table-columns">
-            {['종목명', rows === 2 ? '매입가|현재가' : '현재가', rows === 2 ? '보유수량|가능수량' : '보유수량', rows === 2 ? '평가손익|수익률' : '평가손익'].map(label => <button role="columnheader" aria-sort={sort === label ? 'ascending' : 'none'} key={label} onClick={() => { setSort(sort === label ? '' : label); notify(`${label.split('|')[0]} 정렬 ${sort === label ? '해제' : '선택'}`); }}>{label.split('|').map((line, i) => <span key={line}>{line}<TriangleIcon size={9} weight="fill" className={`sort-mark ${sort === label ? 'sorted' : ''}`} style={{ bottom: i === 0 && label.includes('|') ? '50%' : 0 }} /></span>)}</button>)}
-          </div>
+          <div role="row" className="table-columns">{['종목명', rows === 2 ? '평가손익|수익률' : '평가손익', rows === 2 ? '보유수량|가능수량' : '보유수량', rows === 2 ? '매입금액|평가금액' : '평가금액'].map(label => <button role="columnheader" aria-sort={sort === label ? 'ascending' : 'none'} key={label} onClick={() => setSort(sort === label ? '' : label)}>{label.split('|').map((line, index) => <span key={line}>{line}<TriangleIcon size={9} weight="fill" className={`sort-mark ${sort === label ? 'sorted' : ''}`} style={{ bottom: index === 0 && label.includes('|') ? '50%' : 0 }} /></span>)}</button>)}</div>
           <button className="next-columns icon-button" aria-label="추가 잔고 항목" onClick={() => setSheet('settings')}><TriangleIcon size={12} weight="fill" /></button>
         </div>
         <MobileScroll className="holdings-scroll">
-          {pendingTrade && <button className="trade-reminder" onClick={() => openLanding(pendingTrade)}><SparkleIcon size={17} /><span>{stockFor(pendingTrade.stockId).name} {tradeLabel(pendingTrade)} {pendingTrade.quantity}주<small>이 거래를 왜 했는지 돌아볼까요?</small></span><CaretRightIcon size={15} /></button>}
-          {[...holdings].sort((a, b) => sort.startsWith('종목명') ? stockFor(a.stockId).name.localeCompare(stockFor(b.stockId).name, 'ko') : sort.startsWith('보유수량') ? a.quantity - b.quantity : sort.startsWith('매입가') ? a.averagePrice - b.averagePrice : sort.startsWith('현재가') ? stockFor(a.stockId).price - stockFor(b.stockId).price : sort.startsWith('평가손익') ? (stockFor(a.stockId).price - a.averagePrice) * a.quantity - (stockFor(b.stockId).price - b.averagePrice) * b.quantity : 0).map(item => {
-            const stock = stockFor(item.stockId); const profit = (stock.price - item.averagePrice) * item.quantity;
-            return <button className={`holding-row ${rows === 1 ? 'holding-single' : ''}`} key={item.stockId} aria-label={`${stock.name}, ${item.quantity}주 보유, 거래 내역 보기`} onClick={() => openLanding(accountTrades.find(trade => trade.stockId === item.stockId) || null, true)}><span><strong>{stock.name}</strong>{rows === 2 && <small>{stock.sector}</small>}</span><span>{rows === 2 && <small>{won(item.averagePrice)}</small>}<strong>{won(stock.price)}</strong></span><span><strong>{item.quantity}</strong>{rows === 2 && <small>{item.quantity}</small>}</span><span className={profit >= 0 ? 'profit-positive' : 'profit-negative'}><strong>{won(profit)}</strong>{rows === 2 && <small>{((stock.price / item.averagePrice - 1) * 100).toFixed(2)}%</small>}</span></button>;
-          })}
+          {[...positions].sort((a, b) => sort.startsWith('종목명') ? a.name.localeCompare(b.name, 'ko') : sort.startsWith('보유수량') ? a.quantity - b.quantity : sort.startsWith('평가손익') ? a.profit - b.profit : sort.startsWith('매입금액') ? a.cost - b.cost : 0).map(item => <button className={`holding-row ${rows === 1 ? 'holding-single' : ''}`} key={item.id} aria-label={`${item.name}, ${item.quantity}주 보유, 종목 정보 보기`} onClick={() => { setSelectedHolding(item); setSheet('holding'); }}>
+            <span className="holding-name"><strong>{item.name}</strong><small>{item.symbol}</small></span><span className={item.profit >= 0 ? 'profit-positive' : 'profit-negative'}><strong>{item.profit > 0 ? '+' : ''}{displayAmount(item.profit, item.foreign)}</strong>{rows === 2 && <small>{item.percent > 0 ? '+' : ''}{item.percent.toFixed(2)}%</small>}</span><span><strong>{item.quantity}</strong>{rows === 2 && <small>{item.quantity}</small>}</span><span>{rows === 2 && <strong>{displayAmount(item.cost, item.foreign)}</strong>}<small>{displayAmount(item.value, item.foreign)}</small></span>
+          </button>)}
+          {!positions.length && <p className="account-empty">{balanceTab === '타사 잔고' ? '연결된 타사 계좌가 없습니다.' : '보유 중인 종목이 없습니다.'}</p>}
         </MobileScroll>
-      </> : <MobileScroll className="alternate-scroll"><section className="alternate-content" aria-label={topTab}>
-        {balanceTab === '타사 잔고' ? <><h2>타사 잔고</h2><p>연결된 타사 계좌가 없습니다.</p><button className="sheet-primary" onClick={() => notify('계좌 연결은 시연용 화면에서 제공하지 않습니다.')}>계좌 연결</button></> : topTab === '미체결' ? <><div className="simple-table"><span>종목명</span><span>주문수량</span><span>미체결수량</span></div><p>미체결 내역이 없습니다.</p></> : <><h2>{topTab}</h2>{(topTab === '예수금' ? ['예수금', 'D+1 추정예수금', 'D+2 추정예수금', '출금가능금액'] : ['현금주문가능금액', '증거금 100% 주문가능', '신용주문가능금액']).map(label => <div className="amount-line" key={label}><span>{label}</span><strong>0원</strong></div>)}</>}
-      </section></MobileScroll>}
+      </> : <MobileScroll className="alternate-scroll"><section className="alternate-content" aria-label={topTab}>{topTab === '미체결' ? <><div className="simple-table"><span>종목명</span><span>주문수량</span><span>미체결수량</span></div><p>미체결 내역이 없습니다.</p></> : <><h2>실현손익</h2><div className="amount-line"><span>실현손익 합계</span><strong>{won(summary.realized)}원</strong></div><button className="sheet-primary" onClick={() => openLanding(null, true)}>체결내역 보기</button></>}</section></MobileScroll>}
       <footer className="app-footer">
-        <div className="market-strip"><button className="index-chat" onClick={() => setSheet('chat')}><b>지수</b><span>채팅</span></button><button className="market-values" aria-label="시장 지수 변경" onClick={() => setIndex((index + 1) % indices.length)}><span>{indices[index].name}</span><span>{indices[index].value}</span><span>0.00</span><span>0.00%</span></button></div>
-        <nav className="bottom-nav" aria-label="하단 메뉴"><button className="menu-button" onClick={() => setSheet('menu')}><ListIcon size={29} weight="light" /><strong>메뉴</strong></button>{bottomTabs.map(label => <button key={label} className={label === '계좌' ? 'active' : ''} aria-current={label === '계좌' ? 'page' : undefined} onClick={() => { if (label === '계좌') { selectTop('국내잔고'); setBalanceTab('키움 잔고'); } else { notify(`${label} 화면은 다음 단계에서 연결됩니다.`); } }}>{label}</button>)}</nav>
+        <div className="market-strip"><button className="index-chat" onClick={() => setSheet('chat')}><b>지수</b><span>실시간</span></button><button className="market-values" aria-label="시장 지수 변경" onClick={() => setIndex((index + 1) % indices.length)}><span>{indices[index].name}</span><span>{indices[index].value}</span><span>0.00</span><span>0.00%</span></button></div>
+        <nav className="bottom-nav" aria-label="하단 메뉴"><button className="menu-button" onClick={() => setSheet('menu')}><ListIcon size={29} weight="light" /><strong>메뉴</strong></button>{bottomTabs.map(label => <button key={label} className={label === '계좌' ? 'active' : ''} aria-current={label === '계좌' ? 'page' : undefined} onClick={() => { if (label === '계좌') { selectTop(isOverseas ? '해외잔고' : '국내잔고'); } else { notify(`${label} 화면은 다음 단계에서 연결됩니다.`); } }}>{label}</button>)}</nav>
       </footer>
       {toast && <div className="toast" role="status" style={{ bottom: bottomInset + 118 }}>{toast}</div>}
-      <BottomSheet open={sheet !== null} onOpenChange={open => { if (!open) setSheet(null); }} title={sheet ? titles[sheet] : ''} description="시연용 계좌 · 실제 거래 및 데이터 연결 없음" snap={sheet === 'menu' ? 0.66 : 0.49}>
+      <BottomSheet open={sheet !== null} onOpenChange={open => { if (!open) setSheet(null); }} title={sheet ? titles[sheet] : ''} snap={sheet === 'menu' ? 0.66 : 0.49}>
         <div className="kiwoom-sheet"><button className="sheet-close icon-button" aria-label="닫기" onClick={() => setSheet(null)}><XIcon size={21} /></button>
           {sheet === 'account' && accountOptions.map(value => <button className="sheet-option" key={value} onClick={() => { setAccount(value); setSheet(null); }}><span>{value}</span>{account === value && <CheckIcon size={19} />}</button>)}
-          {sheet === 'notice' && <><p>잔고 및 평가금액은 조회 시점에 따라 달라질 수 있습니다.</p><p>이 화면의 계좌, 잔고와 지수는 프로토타입 시연용 임시 정보입니다.</p><button className="sheet-primary" onClick={() => setSheet(null)}>확인</button></>}
-          {sheet === 'menu' && <><div className="sheet-account">김철수님 <small>1234-5678</small></div>{topTabs.map(label => <button className="sheet-option" key={label} onClick={() => { selectTop(label); setBalanceTab('키움 잔고'); }}><span>{label}</span><CaretDownIcon size={15} className="point-right" /></button>)}</>}
-          {sheet === 'settings' && <><div className="setting-line"><span>잔고 표시</span><div>{[1, 2].map(value => <button key={value} aria-pressed={rows === value} className={rows === value ? 'chosen' : ''} onClick={() => setRows(value)}>{value}줄</button>)}</div></div><div className="setting-line"><span>융자 표시</span><div>{['융자별', '융자합'].map(value => <button key={value} aria-pressed={credit === value} className={credit === value ? 'chosen' : ''} onClick={() => setCredit(value)}>{value}</button>)}</div></div><button className="sheet-primary" onClick={() => setSheet(null)}>적용</button></>}
-          {sheet === 'tools' && ['수익률 계산기', '관심종목 등록', '잔고 화면 설정'].map(label => <button className="sheet-option" key={label} onClick={() => label === '잔고 화면 설정' ? setSheet('settings') : notify('이 도구는 시연용 화면에서 제공하지 않습니다.')}><span>{label}</span><CaretDownIcon size={15} className="point-right" /></button>)}
+          {sheet === 'notice' && <><p>잔고 및 평가금액은 조회 시점에 따라 달라질 수 있습니다.</p><p>평가손익은 환율 및 수수료 반영 여부에 따라 달라질 수 있습니다.</p><button className="sheet-primary" onClick={() => setSheet(null)}>확인</button></>}
+          {sheet === 'menu' && <><div className="sheet-account">김철수님 <small>1234-5678</small></div>{topTabs.map(label => <button className="sheet-option" key={label} onClick={() => { selectTop(label); setBalanceTab('일반 잔고'); }}><span>{label}</span><CaretDownIcon size={15} className="point-right" /></button>)}</>}
+          {sheet === 'settings' && <><div className="setting-line"><span>잔고 표시</span><div>{[1, 2].map(value => <button key={value} aria-pressed={rows === value} className={rows === value ? 'chosen' : ''} onClick={() => setRows(value)}>{value}줄</button>)}</div></div><button className="sheet-primary" onClick={() => setSheet(null)}>적용</button></>}
+          {sheet === 'exchange' && ['전체 거래소', '미국', '홍콩', '일본'].map(value => <button className="sheet-option" key={value} onClick={() => { setExchange(value); setSheet(null); }}><span>{value}</span>{exchange === value && <CheckIcon size={19} />}</button>)}
+          {sheet === 'fees' && <><p>거래 수수료와 제비용은 체결내역에서 확인할 수 있습니다.</p><button className="sheet-primary" onClick={() => openLanding(null, true)}>체결내역 보기</button></>}
+          {sheet === 'deposit' && <><div className="amount-line"><span>원화예수금</span><strong>0원</strong></div><div className="amount-line"><span>출금가능금액</span><strong>0원</strong></div><button className="sheet-primary" onClick={() => setSheet(null)}>확인</button></>}
+          {sheet === 'collection' && <><div className="sheet-empty">모으기로 보유한 종목이 없습니다.</div><button className="sheet-primary" onClick={() => setSheet(null)}>확인</button></>}
+          {sheet === 'holding' && selectedHolding && <><div className="sheet-account">{selectedHolding.symbol}</div><div className="amount-line"><span>보유수량</span><strong>{selectedHolding.quantity}주</strong></div><div className="amount-line"><span>평가손익</span><strong>{displayAmount(selectedHolding.profit, selectedHolding.foreign)}</strong></div><button className="sheet-primary" onClick={() => openLanding(null, true)}>체결내역 보기</button></>}
+          {sheet === 'tools' && ['수익률 계산기', '관심종목 등록', '잔고 화면 설정'].map(label => <button className="sheet-option" key={label} onClick={() => label === '잔고 화면 설정' ? setSheet('settings') : notify('선택한 도구를 준비하고 있습니다.')}><span>{label}</span><CaretDownIcon size={15} className="point-right" /></button>)}
           {sheet === 'ranking' && <><p>월 수익률 순위 조회 (키움전체)</p><div className="sheet-empty">수익률 순위 정보가 없습니다.</div><button className="sheet-primary" onClick={() => setSheet(null)}>확인</button></>}
           {sheet === 'overseas' && <><div className="amount-line"><span>총 평가금액</span><strong>0원</strong></div><div className="sheet-empty">보유 중인 해외 종목이 없습니다.</div><button className="sheet-primary" onClick={() => setSheet(null)}>국내잔고로 돌아가기</button></>}
-          {sheet === 'sell' && <><div className="sheet-empty">매매 주문은 시연하지 않습니다.<br />준비된 거래 내역에서 투자 판단을 돌아보세요.</div><button className="sheet-primary" onClick={() => openLanding(null, true)}>거래 내역 보기</button></>}
+          {sheet === 'sell' && <><div className="sheet-empty">체결 내역에서 거래를 확인하고 투자 판단을 돌아보세요.</div><button className="sheet-primary" onClick={() => openLanding(null, true)}>거래 내역 보기</button></>}
           {sheet === 'chat' && <><div className="sheet-option"><span>{indices[index].name}</span><strong>{indices[index].value}</strong></div><div className="sheet-empty">표시할 대화가 없습니다.</div><button className="sheet-primary" onClick={() => setSheet(null)}>닫기</button></>}
         </div>
       </BottomSheet>
 
     </main>
+    {notificationLayer}
     {!sheet && <button
       ref={aiButtonRef}
       className="ai-launcher"
@@ -177,6 +218,21 @@ export default function Prototype() {
 
 
 
+function DemoPushNotification({ trade, open, onShow, onDismiss, onOpen }: {
+  trade: TradeRecord | undefined; open: boolean; onShow: () => void; onDismiss: () => void; onOpen: () => void;
+}) {
+  const { device } = useMobileDevice();
+  return <>
+    {createPortal(<div className="demo-notification-control"><button onClick={onShow} disabled={!trade}><BellIcon size={17} />알림 띄우기</button></div>, document.body)}
+    {open && trade && <aside className="demo-push-banner" role="status" aria-live="polite" style={{ top: device.geometry.safeArea.top + 8 }}>
+      <button className="demo-push-open" aria-label={`${stockFor(trade.stockId).name} ${tradeLabel(trade)} ${trade.quantity}주 회고 알림 열기`} onClick={onOpen}>
+        <span className="demo-push-icon"><SparkleIcon size={23} weight="fill" /></span><span className="demo-push-copy"><span className="demo-push-app">키움증권 · 투자 고해성사<small>지금</small></span><strong>{stockFor(trade.stockId).name} {tradeLabel(trade)} {trade.quantity}주</strong><span>이 거래를 왜 했는지 돌아볼까요?</span></span>
+      </button><button className="demo-push-dismiss" aria-label="회고 알림 닫기" onClick={onDismiss}><XIcon size={16} /></button>
+    </aside>}
+  </>;
+}
+
+
 type ConfessionTopic = 'follow' | 'average';
 const confessionTopics = [
   { id: 'follow' as const, label: '매수 타이밍이 고민돼요', lines: ['매수 타이밍이', '고민돼요'], Icon: UsersIcon },
@@ -193,7 +249,7 @@ function ConfessionBackdrop({ onReady }: { onReady: () => void }) {
 }
 
 function ConfessionTitle() {
-  return <ConfessionReveal className="confession-heading"><h1><em>마음을 고백하세요.</em></h1></ConfessionReveal>;
+  return <ConfessionReveal className="confession-heading"><h1><em>나의 투자 선택,<br />충동적이진 않았나요?</em></h1></ConfessionReveal>;
 }
 
 function ConfessionDescription() {
@@ -395,7 +451,15 @@ function ConfessionLanding({ onBack, backButtonRef, trades: rawTrades, initialTr
 }) {
   const keyboard = useKeyboard();
   const [topic, setTopic] = useState<ConfessionTopic | null>(null);
-  const [panel, setPanel] = useState<'chat' | 'trades' | 'patterns' | 'principles' | null>(initialTrade || initialRecords ? 'trades' : null);
+  const [screens, dispatch] = useReducer(navigateScreens, undefined, (): Screen[] => initialTrade || initialRecords
+    ? [{ view: 'trades' }, ...(initialTrade ? [{ view: 'trade' as const, id: initialTrade.id }] : [])] : [{ view: 'landing' }]);
+  const current = screens[screens.length - 1];
+  const workspaceScreen = [...screens].reverse().find(screen => !['landing', 'chat'].includes(screen.view)) || { view: 'trades' as const };
+  const covered = current.view !== 'landing';
+  const workspaceCovered = current.view === 'landing' || current.view === 'chat';
+  function back() { keyboard.hide(); if (screens.length > 1) dispatch({ type: 'back' }); else onBack(); }
+  function selectTab(tab: WorkspaceTab) { keyboard.hide(); dispatch({ type: 'tab', tab }); }
+  function push(screen: Screen) { keyboard.hide(); dispatch({ type: 'push', screen }); }
   const [trade, setTrade] = useState<ReflectionTrade | null>(initialTrade ? normalizeTrade(initialTrade) : null);
   const [reference, setReference] = useState<PrincipleReference | null>(null);
   const [preferredPrinciple, setPreferredPrinciple] = useState<InvestmentPrinciple | null>(null);
@@ -403,18 +467,21 @@ function ConfessionLanding({ onBack, backButtonRef, trades: rawTrades, initialTr
   const [backdropReady, setBackdropReady] = useState(false);
   const [mascotReady, setMascotReady] = useState(false);
   const primaryRef = useRef<HTMLButtonElement>(null);
-  function closePanel() { keyboard.hide(); setPanel(null); }
-  function showPrinciples() { keyboard.hide(); setPanel('principles'); }
-  function showPatterns() { keyboard.hide(); setPanel('patterns'); }
-  function showTrades(previous: InvestmentPrinciple | null = null) { keyboard.hide(); setTrade(null); setPreferredPrinciple(previous); setPanel('trades'); }
-  const previousPanel = useRef(panel);
-  useEffect(() => {
-    if (previousPanel.current !== null && panel === null) backButtonRef.current?.focus({ preventScroll: true });
-    previousPanel.current = panel;
-  }, [panel, backButtonRef]);
+  const landingSceneRef = useRef<HTMLDivElement>(null);
+  function showPrinciples() { selectTab('principles'); }
+  function showPatterns() { selectTab('patterns'); }
+  function showTrades(previous: InvestmentPrinciple | null = null) { setPreferredPrinciple(previous); selectTab('trades'); }
+  const previousView = useRef(current.view);
+  useLayoutEffect(() => {
+    if (previousView.current !== 'landing' && current.view === 'landing') {
+      landingSceneRef.current?.closest('.mobile-scroll')?.scrollTo({ top: 0, behavior: 'instant' });
+      backButtonRef.current?.focus({ preventScroll: true });
+    }
+    previousView.current = current.view;
+  }, [current.view, backButtonRef]);
   function start(selectedTopic = topic, selectedTrade: ReflectionTrade | null = null, selectedReference: PrincipleReference | null = null) {
     keyboard.hide(); setTopic(selectedTopic); setTrade(selectedTrade); setReference(selectedReference);
-    setReviewPrinciple(selectedTrade ? null : principles[0] || null); setPanel('chat');
+    setReviewPrinciple(selectedTrade ? null : principles[0] || null); push({ view: 'chat' });
   }
   function saveReview(value: InvestmentPrinciple, context?: TradeReviewContext) {
     const existing = trade ? journal.find(item => item.tradeId === trade.id) : undefined;
@@ -429,14 +496,12 @@ function ConfessionLanding({ onBack, backButtonRef, trades: rawTrades, initialTr
       onJournalChange(next);
     }
   }
-  const covered = panel !== null;
   return <>
   <main className="kiwoom ai-landing confession-landing" aria-label="AI 고해성사 랜딩페이지" data-covered={covered} aria-hidden={covered} inert={covered}>
     <MobileScroll className="confession-scroll">
-      <div className="confession-scene" data-ready={backdropReady && mascotReady}>
+      <div ref={landingSceneRef} className="confession-scene" data-ready={backdropReady && mascotReady}>
         <ConfessionBackdrop onReady={() => setBackdropReady(true)} />
-        <ConfessionTitle />
-        <ConfessionDescription />
+        <div className="confession-intro"><ConfessionTitle /><ConfessionDescription /></div>
         <ConfessionMascot onReady={() => setMascotReady(true)} />
         <ConfessionGreeting />
         <ConfessionTopicPicker topic={topic} onSelect={value => { setTopic(value); setTrade(null); }} />
@@ -448,15 +513,16 @@ function ConfessionLanding({ onBack, backButtonRef, trades: rawTrades, initialTr
     <header className="confession-header">
       <button ref={backButtonRef} className="icon-button" aria-label="뒤로가기" onClick={onBack}><ArrowLeftIcon size={28} weight="light" /></button>
       <span>투자 고해성사</span>
-      <button className="principles-entry icon-button" aria-label="나의 투자 원칙 보기" onClick={showPrinciples}><BookmarkSimpleIcon size={24} />{principles.length > 0 && <small>{principles.length}</small>}</button>
     </header>
   </main>
-  {(panel === 'trades' || panel === 'patterns') && <TradeWorkspace initialView={panel} initialTrade={panel === 'trades' ? trade : null} portfolioTrades={rawTrades.map(normalizeTrade)} journal={journal} principles={principles} preferred={preferredPrinciple}
-    storageAvailable={storageAvailable} onBack={closePanel} onStart={(selected, previous) => start(selected.kind === 'add' ? 'average' : 'follow', selected, previous)} onPrinciples={showPrinciples} />}
-  {panel === 'chat' && <ConfessionChat topic={topic} trade={trade} reference={reference} onBack={trade ? () => { keyboard.hide(); setPanel('trades'); } : closePanel} previous={reviewPrinciple}
+  <div className="workspace-layer" data-covered={workspaceCovered} aria-hidden={workspaceCovered} inert={workspaceCovered}>
+    <TradeWorkspace screen={workspaceScreen} active={!workspaceCovered} portfolioTrades={rawTrades.map(normalizeTrade)} journal={journal} principles={principles} preferred={preferredPrinciple}
+      storageAvailable={storageAvailable} onBack={back} onPush={push} onTabChange={selectTab} onChange={onChange}
+      onStart={(selected, previous) => start(selected.kind === 'add' ? 'average' : 'follow', selected, previous)} onReviewPrinciple={previous => showTrades(previous || null)} />
+  </div>
+  {current.view === 'chat' && <ConfessionChat topic={topic} trade={trade} reference={reference} onBack={back} previous={reviewPrinciple}
     storageAvailable={storageAvailable} onSavedView={trade ? showPatterns : showPrinciples} onSave={saveReview} />}
-  {panel === 'principles' && <InvestmentPrinciples principles={principles} storageAvailable={storageAvailable} onBack={closePanel}
-    onChange={onChange} onStart={previous => showTrades(previous || null)} />}
+
   </>;
 }
 
@@ -486,7 +552,7 @@ function ReflectionCard({ result, onConfirm, onCorrect }: { result: ReflectionRe
     <h2>{categoryFor(result.category).name}</h2>
     <p>{result.explanation}</p>
     <div className="reflection-evidence"><span>이렇게 말씀해 주셨어요</span><blockquote>“{result.evidence}”</blockquote></div>
-    <small>수익이나 손실이 아닌 선택의 이유를 돌아보는 시연용 정리예요. 잘못을 단정하는 판단이 아닙니다.</small>
+    <small>수익이나 손실보다 선택의 이유를 돌아보는 정리예요. 잘못을 단정하는 판단이 아닙니다.</small>
     <h3>이 정리가 내 마음과 맞나요?</h3>
     <div className="reflection-confirm"><button className="flow-primary" onClick={onConfirm}><CheckIcon size={17} />맞아요</button><button className="flow-secondary" onClick={onCorrect}>조금 달라요</button></div>
   </section>;
@@ -598,9 +664,8 @@ function ConfessionChat({ topic, trade, reference, onBack, onSave, onSavedView, 
     <MobileScroll className="chat-scroll">
       <div className={`chat-history reflection-history ${editable ? '' : 'without-composer'}`} style={{ paddingTop: device.geometry.safeArea.top + 84 }}>
         <div className="reflection-steps" aria-label={`진행 단계 ${step + 1}/3`}>{['이야기 나누기', '고백 정리', '원칙 남기기'].map((label, index) => <span key={label} className={index <= step ? 'active' : ''} aria-current={index === step ? 'step' : undefined}><b>{index < step ? <CheckIcon size={10} /> : index + 1}</b>{label}</span>)}</div>
-        <p className="chat-demo-note">프로토타입 · AI 응답과 분류는 시연용입니다</p>
         {trade && <TradeFactCard trade={trade} compact />}
-        {trade && reference && <details className="previous-principle"><summary><BookmarkSimpleIcon size={14} />{reference.source === 'example' ? '시연용 예시 원칙 펼쳐보기' : '거래 전에 남긴 나의 원칙 펼쳐보기'}</summary><strong>{reference.text}</strong><small>손익이 아니라 이 기준을 확인했는지 돌아봐요.</small></details>}
+        {trade && reference && <details className="previous-principle"><summary><BookmarkSimpleIcon size={14} />{reference.source === 'example' ? '예시 원칙 펼쳐보기' : '거래 전에 남긴 나의 원칙 펼쳐보기'}</summary><strong>{reference.text}</strong><small>손익이 아니라 이 기준을 확인했는지 돌아봐요.</small></details>}
         {previous && <aside className="previous-principle"><span><BookmarkSimpleIcon size={14} />지난번에 남긴 나의 원칙</span><strong>{previous.text}</strong><small>이 기준을 이번 선택에 어떻게 적용했는지 돌아봐요.</small></aside>}
         <div className="chat-messages" role="log" aria-label="AI와의 대화" aria-live="polite" aria-relevant="additions">
           {messages.map(message => <div key={message.id} className={`chat-message chat-message-${message.role}`}>
@@ -640,14 +705,13 @@ function ConfessionChat({ topic, trade, reference, onBack, onSave, onSavedView, 
   </main>;
 }
 
-function InvestmentPrinciples({ principles, storageAvailable, onBack, onStart, onChange }: {
-  principles: InvestmentPrinciple[]; storageAvailable: boolean; onBack: () => void;
+function InvestmentPrinciples({ principles, storageAvailable, active, selectedId, onOpen, onBack, onStart, onChange }: {
+  principles: InvestmentPrinciple[]; storageAvailable: boolean; active: boolean; selectedId: string | null; onOpen: (id: string) => void; onBack: () => void;
   onStart: (previous?: InvestmentPrinciple) => void; onChange: (next: InvestmentPrinciple[]) => void;
 }) {
   const keyboard = useKeyboard();
   const { device } = useMobileDevice();
   const { bottomInset, keyboardDragging } = useKeyboardInsets();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [draft, setDraft] = useState('');
@@ -655,24 +719,22 @@ function InvestmentPrinciples({ principles, storageAvailable, onBack, onStart, o
   const backRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const selected = principles.find(item => item.id === selectedId);
-  useEffect(() => { backRef.current?.focus({ preventScroll: true }); }, []);
-  useEffect(() => {
-    scrollRef.current?.closest('.mobile-scroll')?.scrollTo({ top: 0, behavior: 'instant' });
-    backRef.current?.focus({ preventScroll: true });
-  }, [selectedId]);
-  function closeDetail() { keyboard.hide(); setSelectedId(null); setEditing(false); setDeleting(false); }
+  usePagePosition(scrollRef, backRef, selectedId ? `principle:${selectedId}` : 'principles', active);
+  useEffect(() => { setEditing(false); setDeleting(false); setDraft(''); }, [selectedId, active]);
+  function closeDetail() { keyboard.hide(); setEditing(false); setDeleting(false); onBack(); }
+  function goBack() { keyboard.hide(); if (deleting) setDeleting(false); else if (editing) setEditing(false); else onBack(); }
   function saveEdit() {
     if (!selected || !draft.trim()) return;
     keyboard.hide(); onChange(principles.map(item => item.id === selected.id ? { ...item, text: draft.trim(), updatedAt: new Date().toISOString() } : item));
     setEditing(false); setNotice('원칙을 수정했어요.');
   }
   return <main className="kiwoom principles-page" aria-label="나의 투자 원칙">
-    <header className="chat-header" style={{ paddingTop: device.geometry.safeArea.top }}><button ref={backRef} className="icon-button" aria-label={selected ? '투자 원칙 목록으로 돌아가기' : '고해성사 랜딩으로 돌아가기'} onClick={selected ? closeDetail : onBack}><ArrowLeftIcon size={24} /></button><div><strong>{selected ? '원칙 돌아보기' : '나의 투자 원칙'}</strong>{!selected && <span>{principles.length}개의 원칙</span>}</div></header>
-    <MobileScroll className="principles-scroll"><div ref={scrollRef} className="principles-content" style={{ paddingTop: device.geometry.safeArea.top + 92 }}>
+    <header className="chat-header" style={{ paddingTop: device.geometry.safeArea.top }}><button ref={backRef} className="icon-button" aria-label={deleting ? '삭제 취소' : editing ? '원칙 수정 취소' : selected ? '투자 원칙 목록으로 돌아가기' : '이전 화면으로 돌아가기'} onClick={goBack}><ArrowLeftIcon size={24} /></button><div><strong>{selected ? '원칙 돌아보기' : '나의 투자 원칙'}</strong>{!selected && <span>{principles.length}개의 원칙</span>}</div></header>
+    <MobileScroll className="principles-scroll"><div ref={scrollRef} className={`principles-content ${selected ? 'has-detail-action' : ''}`} style={{ paddingTop: device.geometry.safeArea.top + 92 }}>
       {notice && <p className="principles-notice" role="status">{notice}</p>}
       {!selected && principles.length > 0 && <PrincipleBadgeSummary principles={principles} />}
-      {!selected && principles.length === 0 && <section className="principles-empty"><BookmarkSimpleIcon size={28} weight="light" /><p>아직 저장한 투자 원칙이 없어요.</p><small>고해성사에서 원칙을 남기면<br />거래 기록과 뱃지가 여기에 쌓여요.</small></section>}
-      {!selected && principles.length > 0 && <div className="principles-list">{principles.map((item, index) => <button className="principle-list-card" key={item.id} aria-label={`투자 원칙 ${index + 1}, ${principleBadges[item.category].label}: ${item.text}`} onClick={() => { keyboard.hide(); setNotice(''); setSelectedId(item.id); }}><span className="principle-card-top"><span className="principle-card-date"><b>{String(principles.length - index).padStart(2, '0')}</b><small>{principleDate(item.createdAt)}</small></span><PrincipleBadge category={item.category} /></span>{item.trade && <span className="principle-trade-line">{stockFor(item.trade.stockId).name} · {tradeLabel(item.trade)} {item.trade.quantity}주</span>}<strong>{item.text}</strong><p>{item.evidence}</p></button>)}</div>}
+      {!selected && principles.length === 0 && <section className="principles-empty"><BookmarkSimpleIcon size={28} weight="light" /><p>아직 저장한 투자 원칙이 없어요.</p><small>고해성사에서 원칙을 남기면<br />거래 기록과 뱃지가 여기에 쌓여요.</small><button className="flow-primary" onClick={() => onStart()}>나의 투자 돌아보기<ArrowRightIcon size={17} /></button></section>}
+      {!selected && principles.length > 0 && <div className="principles-list">{principles.map((item, index) => <button className="principle-list-card" key={item.id} aria-label={`투자 원칙 ${index + 1}, ${principleBadges[item.category].label}: ${item.text}`} onClick={() => { keyboard.hide(); setNotice(''); onOpen(item.id); }}><span className="principle-card-top"><span className="principle-card-date"><b>{String(principles.length - index).padStart(2, '0')}</b><small>{principleDate(item.createdAt)}</small></span><PrincipleBadge category={item.category} /></span>{item.trade && <span className="principle-trade-line">{stockFor(item.trade.stockId).name} · {tradeLabel(item.trade)} {item.trade.quantity}주</span>}<strong>{item.text}</strong><p>{item.evidence}</p></button>)}</div>}
       {selected && <article className="principle-detail"><span className="reflection-eyebrow">{principleDate(selected.createdAt)}에 남긴 원칙</span><h1>{selected.text}</h1><PrincipleBadge category={selected.category} />{selected.trade && <TradeFactCard trade={normalizeTrade(selected.trade)} compact />}
         {editing && <section className="principle-edit"><label htmlFor="principle-edit">나의 말로 다시 다듬기</label><div className="chat-input-wrap"><KeyboardTextarea id="principle-edit" aria-label="저장한 투자 원칙 수정" rows={3} maxLength={160} value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => keyboard.hide()} onKeyDown={event => { if (event.key === 'Escape') keyboard.hide(); }} /></div><small>{draft.length}/160</small><button className="flow-text" onClick={() => { keyboard.hide(); setEditing(false); }}>수정 취소</button></section>}
         <section className="principle-origin"><h2>이 원칙이 시작된 이야기</h2><blockquote>“{selected.evidence}”</blockquote><p>{selected.explanation}</p>{selected.previousPrinciple && <p className="principle-previous">지난 원칙을 돌아보며 남겼어요<br />{selected.previousPrinciple}</p>}</section>
@@ -682,7 +744,7 @@ function InvestmentPrinciples({ principles, storageAvailable, onBack, onStart, o
       </article>}
       {!storageAvailable && <p className="principles-storage" role="status">브라우저 저장이 제한되어 현재 화면에서만 유지돼요.</p>}
     </div></MobileScroll>
-    <footer className="principles-footer" style={{ bottom: bottomInset, transition: keyboardDragging ? 'none' : undefined }}><button className="flow-primary" disabled={editing && !draft.trim()} onPointerDown={event => { if (event.button === 0) event.preventDefault(); }} onClick={() => { keyboard.hide(); if (editing) saveEdit(); else onStart(selected); }}>{editing ? '수정한 원칙 저장하기' : selected ? '이 원칙으로 다시 돌아보기' : principles.length > 0 ? '새로운 투자 돌아보기' : '나의 투자 돌아보기'}<ArrowRightIcon size={19} /></button></footer>
+    {selected && <footer className="principles-footer" style={{ bottom: bottomInset, transition: keyboardDragging ? 'none' : undefined }}><button className="flow-primary" disabled={editing && !draft.trim()} onPointerDown={event => { if (event.button === 0) event.preventDefault(); }} onClick={() => { keyboard.hide(); if (editing) saveEdit(); else onStart(selected); }}>{editing ? '수정한 원칙 저장하기' : selected ? '이 원칙으로 다시 돌아보기' : principles.length > 0 ? '새로운 투자 돌아보기' : '나의 투자 돌아보기'}<ArrowRightIcon size={19} /></button></footer>}
   </main>;
 }
 
@@ -690,18 +752,17 @@ function InvestmentPrinciples({ principles, storageAvailable, onBack, onStart, o
 function TradeFactCard({ trade, compact = false }: { trade: ReflectionTrade; compact?: boolean }) {
   const signedPercent = (value: number | null) => value === null ? '미기록' : `${value > 0 ? '+' : ''}${value}%`;
   return <section className={`trade-facts ${compact ? 'compact' : ''}`} aria-label="회고할 거래 정보">
-    <div className="trade-fact-heading"><span className={`trade-side ${trade.side}`}>{tradeAction(trade)}</span><strong>{trade.name}</strong><small>시연용 거래</small></div>
+    <div className="trade-fact-heading"><span className={`trade-side ${trade.side}`}>{tradeAction(trade)}</span><strong>{trade.name}</strong><small>체결 정보</small></div>
     <p>{tradeDate(trade.executedAt)} · {trade.quantity}주 · {formatWon(trade.price)}</p>
     {trade.record && <p>보유 {trade.record.beforeQuantity}주 → {trade.record.afterQuantity}주</p>}
     {!compact && <><dl className="trade-metrics">
-      <div><dt>체결 금액</dt><dd>{formatWon(trade.price * trade.quantity)}</dd></div><div><dt>시연 전일 대비</dt><dd className={trade.change !== null && trade.change >= 0 ? 'positive' : 'negative'}>{signedPercent(trade.change)}</dd></div>
-      <div><dt>시연 거래량 / 평균</dt><dd>{trade.volumeRatio === null ? '미기록' : `${trade.volumeRatio.toFixed(1)}배`}</dd></div><div><dt>거래 후 주식 내 비중</dt><dd>{trade.weightAfter === null ? '미기록' : `${trade.weightAfter}%`}</dd></div>
-    </dl><small className="trade-context-note">주식 평가액 기준 비중 {trade.weightBefore === null ? '미기록' : `${trade.weightBefore}%`} → {trade.weightAfter === null ? '미기록' : `${trade.weightAfter}%`}<br />시연 시장 등락 {signedPercent(trade.marketChange)} · 가격 흐름·시세 지표는 시연용 예시</small></>}
+      <div><dt>체결 금액</dt><dd>{formatWon(trade.price * trade.quantity)}</dd></div><div><dt>전일 대비</dt><dd className={trade.change !== null && trade.change >= 0 ? 'positive' : 'negative'}>{signedPercent(trade.change)}</dd></div>
+      <div><dt>거래량 / 평균</dt><dd>{trade.volumeRatio === null ? '미기록' : `${trade.volumeRatio.toFixed(1)}배`}</dd></div><div><dt>거래 후 주식 내 비중</dt><dd>{trade.weightAfter === null ? '미기록' : `${trade.weightAfter}%`}</dd></div>
+    </dl><small className="trade-context-note">주식 평가액 기준 비중 {trade.weightBefore === null ? '미기록' : `${trade.weightBefore}%`} → {trade.weightAfter === null ? '미기록' : `${trade.weightAfter}%`}<br />시장 등락 {signedPercent(trade.marketChange)}</small></>}
   </section>;
 }
 
-function TradeTimingChart({ trade }: { trade: ReflectionTrade }) {
-  const [showAfter, setShowAfter] = useState(false);
+function TradeTimingChart({ trade, showAfter, onToggle }: { trade: ReflectionTrade; showAfter: boolean; onToggle: () => void }) {
   if (!trade.prices) return <section className="timing-card" aria-label="거래 시점 차트"><div className="section-heading"><h2>거래 시점 기록</h2><span>시세 미기록</span></div><p>이전 버전의 거래에는 시점별 시세가 없어 체결가 {formatWon(trade.price)}만 확인할 수 있어요.</p></section>;
   const values = trade.prices.slice(0, showAfter ? 10 : 7);
   const min = Math.min(...values) * .98, max = Math.max(...values) * 1.02;
@@ -709,9 +770,9 @@ function TradeTimingChart({ trade }: { trade: ReflectionTrade }) {
   const y = (price: number) => 184 - (price - min) / (max - min) * 116;
   const points = (start: number, end: number) => values.slice(start, end).map((price, offset) => `${x(start + offset)},${y(price)}`).join(' ');
   return <section className="timing-card" aria-label="거래 시점 차트">
-    <div className="section-heading"><h2>그때, 이 가격에서</h2><span>가상 가격 흐름</span></div>
+    <div className="section-heading"><h2>그때, 이 가격에서</h2><span>가격 흐름</span></div>
     <p>체결 당시 확인할 수 있었던 흐름을 먼저 살펴봐요.</p>
-    <svg viewBox="0 0 360 225" role="img" aria-label={`${trade.name} 가상 가격 차트, ${tradeAction(trade)} 체결가 ${trade.price}원. ${showAfter ? '사후 가상 흐름을 점선으로 표시' : '체결 이후 가격은 숨김'}`}>
+    <svg viewBox="0 0 360 225" role="img" aria-label={`${trade.name} 가격 차트, ${tradeAction(trade)} 체결가 ${trade.price}원. ${showAfter ? '사후 흐름을 점선으로 표시' : '체결 이후 가격은 숨김'}`}>
       {showAfter && <rect x={x(6)} y="48" width={334 - x(6)} height="139" fill="#ffffff04" />}
       {[0, .5, 1].map(ratio => <g key={ratio}><line x1="42" x2="334" y1={68 + ratio * 116} y2={68 + ratio * 116} stroke="#333540" strokeDasharray="3 5" /><text x="3" y={72 + ratio * 116}>{Math.round(max - ratio * (max - min)).toLocaleString('ko-KR')}</text></g>)}
       <polyline points={points(0, 7)} fill="none" stroke="#efa0ce" strokeWidth="2.5" strokeLinejoin="round" />
@@ -722,15 +783,15 @@ function TradeTimingChart({ trade }: { trade: ReflectionTrade }) {
       <text x="42" y="210">체결 60분 전</text><text x={x(6)} y="210" textAnchor="end">체결 시점</text>
       {showAfter && <text x="335" y="210" textAnchor="end">이후</text>}
     </svg>
-    <button className="chart-toggle" aria-pressed={showAfter} onClick={() => setShowAfter(!showAfter)}>{showAfter ? '사후 흐름 숨기기' : '사후 흐름 따로 보기'}<CaretDownIcon size={14} /></button>
-    <small>{showAfter ? '점선은 사후 설명용 가상 가격입니다. 당시에는 알 수 없었던 정보예요.' : '당시 지표와 사후 결과를 구분해 판단 과정을 돌아봐요.'}</small>
+    <div className="chart-actions"><button className="chart-toggle" aria-pressed={showAfter} onClick={onToggle}><span className="chart-switch" aria-hidden="true"><i /></span>사후 흐름<span className="chart-toggle-state">{showAfter ? '켜짐' : '꺼짐'}</span></button></div>
+    <small>{showAfter ? '점선은 체결 이후의 가격 흐름입니다. 당시에는 알 수 없었던 정보예요.' : '당시 지표와 사후 결과를 구분해 판단 과정을 돌아봐요.'}</small>
   </section>;
 }
 
 function PrincipleComparison({ reference, application, onChange }: { reference: PrincipleReference | null; application: PrincipleApplication; onChange?: (value: PrincipleApplication) => void }) {
   return <section className="principle-comparison" aria-label="이전 원칙 적용 여부">
     <span className="reflection-eyebrow"><ShieldCheckIcon size={16} />이전 원칙과 이번 선택</span>
-    {reference ? <><blockquote>{reference.text}</blockquote><small>{reference.source === 'example' ? '시연용 예시 원칙' : '사용자가 남긴 원칙'} · 거래 전 작성</small>
+    {reference ? <><blockquote>{reference.text}</blockquote><small>{reference.source === 'example' ? '예시 원칙' : '사용자가 남긴 원칙'} · 거래 전 작성</small>
       <span className={`application-label application-${application}`}>{applicationLabels[application]} · 사용자 확인</span>
       {onChange && <div className="application-options" role="group" aria-label="원칙 적용 여부 확인">{(['kept', 'missed', 'uncertain'] as const).map(value => <button key={value} aria-pressed={application === value} onClick={() => onChange(value)}>{applicationLabels[value]}</button>)}</div>}
       <p>수익과 손실이 아니라, 스스로 정한 기준을 적용했는지 확인해요.</p></>
@@ -767,23 +828,27 @@ function readReminderSettings(): ReminderSettings {
   return { enabled: false, privatePreview: true, hour: '17:00' };
 }
 
-function TradeWorkspace({ initialView, initialTrade, portfolioTrades, journal, principles, preferred, storageAvailable, onBack, onStart, onPrinciples }: {
-  initialView: 'trades' | 'patterns'; initialTrade: ReflectionTrade | null; portfolioTrades: ReflectionTrade[]; journal: TradeReflection[]; principles: InvestmentPrinciple[];
-  preferred: InvestmentPrinciple | null; storageAvailable: boolean; onBack: () => void; onStart: (trade: ReflectionTrade, reference: PrincipleReference | null) => void; onPrinciples: () => void;
+function TradeWorkspace({ screen, active, portfolioTrades, journal, principles, preferred, storageAvailable, onBack, onPush, onTabChange, onChange, onStart, onReviewPrinciple }: {
+  screen: Screen; active: boolean; portfolioTrades: ReflectionTrade[]; journal: TradeReflection[]; principles: InvestmentPrinciple[];
+  preferred: InvestmentPrinciple | null; storageAvailable: boolean; onBack: () => void; onPush: (screen: Screen) => void; onTabChange: (tab: WorkspaceTab) => void;
+  onChange: (next: InvestmentPrinciple[]) => void; onStart: (trade: ReflectionTrade, reference: PrincipleReference | null) => void; onReviewPrinciple: (principle?: InvestmentPrinciple) => void;
 }) {
   const keyboard = useKeyboard(), { device } = useMobileDevice(), { bottomInset } = useKeyboardInsets();
-  const [view, setView] = useState<'trades' | 'patterns' | 'settings'>(initialView);
-  const [selectedId, setSelectedId] = useState(initialTrade?.id || null);
+  const view = screen.view;
+  const selectedId = screen.view === 'trade' ? screen.id : null;
+  const principleTab = screen.view === 'principles' || screen.view === 'principle';
   const [filter, setFilter] = useState<'all' | 'pending' | 'reviewed'>('all');
   const [side, setSide] = useState<'all' | 'buy' | 'sell'>('all');
   const [category, setCategory] = useState<PrincipleCategory | null>(null);
   const [examples, setExamples] = useState(false);
-  const [referenceId, setReferenceId] = useState<string | null>(() => {
-    if (!initialTrade) return null;
-    const previous = journal.find(item => item.tradeId === initialTrade.id)?.reference;
-    const choices = eligibleReferences(initialTrade, principles);
-    return (previous?.source === 'example' ? previous.id : choices.find(item => item.id === previous?.id)?.id) || choices[0]?.id || null;
-  });
+  const [referenceId, setReferenceId] = useState<string | null>(null);
+  const referenceSelections = useRef<Record<string, string | null>>({});
+  const [afterTradeIds, setAfterTradeIds] = useState<string[]>([]);
+  useEffect(() => { referenceSelections.current = {}; }, [preferred?.id]);
+  function selectReference(id: string | null) {
+    if (selectedId) referenceSelections.current[selectedId] = id;
+    setReferenceId(id);
+  }
   const [settings, setSettings] = useState(readReminderSettings);
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState(false);
@@ -800,46 +865,45 @@ function TradeWorkspace({ initialView, initialTrade, portfolioTrades, journal, p
     const record = records.find(item => item.tradeId === trade.id);
     return (side === 'all' || trade.side === side) && (filter === 'all' || (filter === 'reviewed' ? !!record : !record)) && (!category || record?.category === category);
   });
-  useEffect(() => { contentRef.current?.closest('.mobile-scroll')?.scrollTo({ top: 0, behavior: 'instant' }); backRef.current?.focus({ preventScroll: true }); }, [selectedId, view]);
-  function openTrade(trade: ReflectionTrade) {
-    keyboard.hide(); setSelectedId(trade.id); setNotice('');
-    const choices = eligibleReferences(trade, principles);
-    const previous = journal.find(item => item.tradeId === trade.id)?.reference;
-    setReferenceId(choices.find(item => item.id === preferred?.id)?.id || (previous?.source === 'example' ? previous.id : choices.find(item => item.id === previous?.id)?.id) || choices[0]?.id || null);
-  }
-  function navigate(next: 'trades' | 'patterns' | 'settings') { keyboard.hide(); setExamples(false); setSelectedId(null); setView(next); setCategory(null); setNotice(''); setPreview(false); }
-  function back() { keyboard.hide(); if (selected) setSelectedId(null); else if (view === 'settings') navigate('patterns'); else onBack(); }
+  usePagePosition(contentRef, backRef, selectedId ? `trade:${selectedId}` : view, active && !principleTab);
+  useEffect(() => {
+    if (!selected) return;
+    const choices = eligibleReferences(selected, principles);
+    const previous = journal.find(item => item.tradeId === selected.id)?.reference;
+    setReferenceId(Object.hasOwn(referenceSelections.current, selected.id) ? referenceSelections.current[selected.id] : choices.find(item => item.id === preferred?.id)?.id || (previous?.source === 'example' ? previous.id : choices.find(item => item.id === previous?.id)?.id) || choices[0]?.id || null);
+  }, [selectedId]);
+  function openTrade(trade: ReflectionTrade) { keyboard.hide(); onPush({ view: 'trade', id: trade.id }); setNotice(''); }
+  function navigate(next: WorkspaceTab) { keyboard.hide(); setExamples(false); setCategory(null); setNotice(''); setPreview(false); onTabChange(next); }
   function changeSettings(next: ReminderSettings) {
     setSettings(next); setPreview(false);
     try { localStorage.setItem(reminderStorageKey, JSON.stringify(next)); setNotice(''); } catch { setNotice('설정은 현재 화면에서만 유지돼요.'); }
   }
-  return <main className="kiwoom trade-workspace" aria-label="거래 기반 투자 오답노트">
-    <header className="chat-header" style={{ paddingTop: device.geometry.safeArea.top }}><button ref={backRef} className="icon-button" aria-label={selected ? '거래 목록으로 돌아가기' : view === 'settings' ? '오답노트로 돌아가기' : '고해성사 랜딩으로 돌아가기'} onClick={back}><ArrowLeftIcon size={24} /></button><div><strong>{selected ? '매매 돌아보기' : view === 'trades' ? '나의 매매 기록' : view === 'settings' ? '회고 알림' : '투자 오답노트'}</strong><span>투자 고해성사 · v1.2</span></div><button className="icon-button workspace-bell" aria-label="회고 알림 설정" onClick={() => navigate('settings')}><BellIcon size={22} /></button></header>
+  return <>
+  <div className="workspace-tab-layer" hidden={principleTab} inert={principleTab}><main className="kiwoom trade-workspace" aria-label="거래 기반 투자 오답노트">
+    <header className="chat-header" style={{ paddingTop: device.geometry.safeArea.top }}><button ref={backRef} className="icon-button" aria-label={selected ? '거래 목록으로 돌아가기' : view === 'settings' ? '알림 설정 닫기' : '이전 화면으로 돌아가기'} onClick={onBack}><ArrowLeftIcon size={24} /></button><div><strong>{selected ? '매매 돌아보기' : view === 'trades' ? '나의 매매 기록' : view === 'settings' ? '회고 알림' : '투자 오답노트'}</strong><span>투자 고해성사</span></div><button className="icon-button workspace-bell" aria-label="회고 알림 설정" onClick={() => { setPreview(false); onPush({ view: 'settings' }); }}><BellIcon size={22} /></button></header>
     <MobileScroll className="trade-workspace-scroll"><div ref={contentRef} className="trade-workspace-content" style={{ paddingTop: device.geometry.safeArea.top + 96 }}>
-      <p className="trade-demo-label"><i />시연용 거래 내역 {portfolioTrades.length}건 · 임시 데이터</p>
       {notice && <p role="status" className="principles-notice">{notice}</p>}
       {!storageAvailable && <p role="status" className="principles-storage">저장이 제한되어 현재 화면에서만 유지돼요.</p>}
       {selected ? <>
-        <TradeFactCard trade={selected} /><TradeTimingChart key={selected.id} trade={selected} />
+        <TradeFactCard trade={selected} /><TradeTimingChart trade={selected} showAfter={afterTradeIds.includes(selected.id)} onToggle={() => setAfterTradeIds(ids => ids.includes(selected.id) ? ids.filter(id => id !== selected.id) : [...ids, selected.id])} />
         {existing && <section className="journal-entry"><div className="section-heading"><h2>{examples ? '예시 고백 정리' : '이 거래의 고백 정리'}</h2><PrincipleBadge category={existing.category} /></div><blockquote>“{existing.evidence}”</blockquote><p>{existing.explanation}</p>
           <PrincipleComparison reference={existing.reference} application={existing.application} /><h3>다음 선택을 위한 원칙</h3><p className="journal-next-principle">{existing.nextPrinciple}</p><small>회고에 남긴 원칙 스냅샷 · 원칙을 삭제해도 거래 회고는 유지돼요.</small>
           <details className="principle-conversation"><summary>이 거래에서 나눈 대화</summary>{existing.answers.map((answer, index) => <div key={index}><p>{answer.question}</p><blockquote>{answer.text}</blockquote></div>)}</details>
         </section>}
         <section className="reference-picker"><div className="section-heading"><h2>이번에 점검할 원칙</h2><BookmarkSimpleIcon size={18} /></div><p>이 거래 전에 작성·수정한 원칙만 선택할 수 있어요.</p>
-          <div role="group" aria-label="거래에 적용할 이전 원칙"><button aria-pressed={!referenceId} onClick={() => setReferenceId(null)}>이전 원칙 없이 돌아보기</button>{references.map(item => <button key={item.id} aria-pressed={referenceId === item.id} onClick={() => setReferenceId(item.id)}>{item.text}</button>)}
-          <button aria-pressed={referenceId === exampleReference.id} onClick={() => setReferenceId(exampleReference.id)}><span>시연용 예시 원칙으로 비교</span>{exampleReference.text}</button></div>
+          <div role="group" aria-label="거래에 적용할 이전 원칙"><button aria-pressed={!referenceId} onClick={() => selectReference(null)}>이전 원칙 없이 돌아보기</button>{references.map(item => <button key={item.id} aria-pressed={referenceId === item.id} onClick={() => selectReference(item.id)}>{item.text}</button>)}
+          <button aria-pressed={referenceId === exampleReference.id} onClick={() => selectReference(exampleReference.id)}><span>예시 원칙으로 비교</span>{exampleReference.text}</button></div>
           {!references.length && <small>거래 전에 작성한 나의 원칙은 아직 없어요. 예시 원칙은 내 원칙 목록에 추가되지 않아요.</small>}
         </section>
       </> : view === 'patterns' ? <>
         <div className="record-source-switch" role="group" aria-label="오답노트 데이터 선택"><button aria-pressed={!examples} onClick={() => { setExamples(false); setCategory(null); }}>내가 남긴 회고 {ownRecords.length}건</button><button aria-pressed={examples} onClick={() => { setExamples(true); setCategory(null); }}>예시 회고 보기</button></div>
-        <PatternReport records={records} total={availableTrades.length} isExample={examples} onCategory={value => { keyboard.hide(); setCategory(value); setFilter('reviewed'); setSide('all'); setView('trades'); }} />
+        <PatternReport records={records} total={availableTrades.length} isExample={examples} onCategory={value => { keyboard.hide(); setCategory(value); setFilter('reviewed'); setSide('all'); onTabChange('trades'); }} />
       </> : view === 'settings' ? <section className="reminder-settings"><div className="reminder-icon"><BellIcon size={28} /></div><h1>마감 후, 잠깐의 돌아보기</h1><p>놓친 거래의 판단 이유를 정리할 수 있게<br />가볍게 알려드릴게요.</p>
         <div className="setting-row"><div><strong>회고 알림 받기</strong><small>기본 꺼짐 · 하루 최대 한 번</small></div><button className="setting-switch" role="switch" aria-checked={settings.enabled} aria-label="회고 알림 받기" onClick={() => changeSettings({ ...settings, enabled: !settings.enabled })}><i /></button></div>
         <div className="setting-row"><div><strong>미리보기 정보 숨기기</strong><small>종목명과 매매 금액은 항상 숨겨요</small></div><button className="setting-switch" role="switch" aria-checked={settings.privatePreview} aria-label="알림 미리보기 정보 숨기기" onClick={() => changeSettings({ ...settings, privatePreview: !settings.privatePreview })}><i /></button></div>
         <h2>알림 시간</h2><div className="reminder-times" role="group" aria-label="회고 알림 시간">{(['17:00', '20:00'] as const).map(hour => <button key={hour} aria-pressed={settings.hour === hour} disabled={!settings.enabled} onClick={() => changeSettings({ ...settings, hour })}>{hour}</button>)}</div>
         <button className="flow-secondary reminder-preview-button" disabled={!settings.enabled || !remaining} onClick={() => setPreview(true)}>미회고 거래 알림 미리보기</button>
         {preview && <button className="reminder-preview" role="status" onClick={() => { navigate('trades'); setExamples(false); setFilter('pending'); setSide('all'); }}><span><BellIcon size={15} />투자 고해성사 · {settings.hour}</span><strong>{settings.privatePreview ? '오늘의 투자 판단을 함께 돌아볼까요?' : `돌아보지 않은 매매가 ${remaining}건 있어요.`}</strong><small>눌러서 회고할 거래 보기<ArrowRightIcon size={14} /></small></button>}
-        <small className="reminder-disclaimer">실제 푸시가 아닌 앱 안의 시연 화면입니다. 선택한 시간에 자동 발송되지는 않아요.</small>
       </section> : <>
         <section className="trade-list-intro"><h1>선택의 순간을<br />다시 펼쳐볼까요?</h1><p>체결 정보는 준비했어요.<br />그때의 이유만 들려주세요.</p></section>
         {category && <button className="category-filter" onClick={() => setCategory(null)}><PrincipleBadge category={category} />분류 필터 해제<XIcon size={14} /></button>}
@@ -851,7 +915,34 @@ function TradeWorkspace({ initialView, initialTrade, portfolioTrades, journal, p
         {!filtered.length && <section className="trade-empty"><ReceiptIcon size={28} /><p>{availableTrades.length ? '이 조건에 맞는 거래가 없어요.' : '표시할 거래 내역이 없어요.'}</p>{availableTrades.length ? <button className="flow-text" onClick={() => { setFilter('all'); setSide('all'); setCategory(null); }}>전체 거래 보기</button> : null}</section>}
       </>}
     </div></MobileScroll>
-    <footer className="workspace-footer" style={{ bottom: bottomInset }}>{selected ? <button className="flow-primary" onClick={() => { keyboard.hide(); onStart(selected, reference); }}>{existing ? '이 거래 다시 돌아보기' : '이 거래 돌아보기'}<ArrowRightIcon size={18} /></button>
-      : <nav aria-label="투자 고해성사 메뉴"><button aria-current={view === 'trades' ? 'page' : undefined} onClick={() => navigate('trades')}><ReceiptIcon size={21} />매매 기록</button><button aria-current={view === 'patterns' ? 'page' : undefined} onClick={() => navigate('patterns')}><ChartLineIcon size={21} />오답노트</button><button onClick={() => { keyboard.hide(); onPrinciples(); }}><BookmarkSimpleIcon size={21} />투자 원칙</button></nav>}</footer>
-  </main>;
+    {selected && <footer className="workspace-footer workspace-action-footer" style={{ bottom: bottomInset }}><button className="flow-primary" onClick={() => { keyboard.hide(); onStart(selected, reference); }}>{existing ? '이 거래 다시 돌아보기' : '이 거래 돌아보기'}<ArrowRightIcon size={18} /></button></footer>}
+  </main></div>
+  <div className="workspace-tab-layer" hidden={!principleTab} inert={!principleTab}>
+    <InvestmentPrinciples principles={principles} storageAvailable={storageAvailable} active={active && principleTab}
+      selectedId={screen.view === 'principle' ? screen.id : null} onOpen={id => onPush({ view: 'principle', id })} onBack={onBack} onStart={onReviewPrinciple} onChange={onChange} />
+  </div>
+  {['trades', 'patterns', 'principles'].includes(view) && <WorkspaceTabs active={screenTab(screen)} onChange={navigate} />}
+  </>;
+}
+
+function usePagePosition(contentRef: RefObject<HTMLDivElement | null>, backRef: RefObject<HTMLButtonElement | null>, key: string, active: boolean) {
+  const positions = useRef<Record<string, number>>({});
+  useLayoutEffect(() => {
+    if (!active) return;
+    const scroll = contentRef.current?.closest('.mobile-scroll');
+    if (!scroll) return;
+    scroll.scrollTo({ top: positions.current[key] || 0, behavior: 'instant' });
+    backRef.current?.focus({ preventScroll: true });
+    const remember = () => { positions.current[key] = scroll.scrollTop; };
+    scroll.addEventListener('scroll', remember);
+    return () => { scroll.removeEventListener('scroll', remember); };
+  }, [key, active, contentRef, backRef]);
+}
+function WorkspaceTabs({ active, onChange }: { active: WorkspaceTab; onChange: (tab: WorkspaceTab) => void }) {
+  const { bottomInset } = useKeyboardInsets();
+  const reducedMotion = useReducedMotion();
+  return <footer className="workspace-tabs" style={{ bottom: bottomInset + 10 }}>
+    <nav aria-label="투자 고해성사 메뉴">{([{ id: 'trades', label: '매매 기록', Icon: ReceiptIcon }, { id: 'patterns', label: '투자 오답노트', Icon: ChartLineIcon }, { id: 'principles', label: '투자 원칙', Icon: BookmarkSimpleIcon }] as const).map(({ id, label, Icon }) =>
+      <motion.button key={id} whileTap={reducedMotion ? undefined : { scale: .94 }} aria-current={active === id ? 'page' : undefined} onClick={() => { if (id !== active) onChange(id); }}>{active === id && <motion.span className="workspace-active-glass" layoutId="workspace-active-glass" initial={false} transition={reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 380, damping: 32, mass: .8 }} />}<Icon size={22} weight={active === id ? 'fill' : 'regular'} /><span className="workspace-tab-label">{label}</span></motion.button>)}</nav>
+  </footer>;
 }
